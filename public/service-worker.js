@@ -31,7 +31,6 @@ self.addEventListener("fetch", function (event) {
 
 
 
-
 var CACHE_NAME = 'budget-v2';
 var urlsToCache = [
   '/',

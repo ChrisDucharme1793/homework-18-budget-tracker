@@ -1,70 +1,65 @@
-const FILES_TO_CACHE = [
-    "/",
-    "/index.html",
-    "/index.js",
-    "/db.js",
-    "/style.css"];
+const indexedDB =
+  window.indexedDB ||
+  window.mozIndexedDB ||
+  window.webkitIndexedDB ||
+  window.msIndexedDB ||
+  window.shimIndexedDB;
 
-    const CACHE_NAME = 'static-cache-v13';
-    const DATA_CACHE_NAME = 'data-cache-v8';
+let db;
+const request = indexedDB.open("budget", 1);
 
-    //Install service worker
-    self.addEventListener('install', evt => {
-        evt.waitUntil(
-            caches.open(CACHE_NAME).then(cache =>{
-                console.log('Your files were pre-cached successfully');
-                return cache.addAll(FILES_TO_CACHE);
-            })
-        );
-        self.skipWaiting();
-    });
+request.onupgradeneeded = ({ target }) => {
+  let db = target.result;
+  db.createObjectStore("pending", { autoIncrement: true });
+};
 
-    // Activate Service Worker
-    self.addEventListener('activate', evt => {
-        evt.waitUntil(
-            caches.keys().then(keyList => {
-                return Promise.all(
-                    keyList.map( key => {
-                        if (key !== CACHE_NAME && key !== DATA_CACHE_NAME) {
-                            console.log('Removing old cache data', key);
-                            return caches.delete(key);
-                        }
-                    })
-                );
-            })
-        );
-        self.clients.claim();
-    });
+request.onsuccess = ({ target }) => {
+  db = target.result;
 
-    // 5. Fetch Files
-    self.addEventListener('fetch',  evt =>{
-        if (evt.request.url.includes('/api/')) {
-            console.log('[Service Worker] Fetch (data)', evt.request.url);
+  // check if app is online before reading from db
+  if (navigator.onLine) {
+    checkDatabase();
+  }
+};
 
-            evt.respondWith(
-                caches.open(DATA_CACHE_NAME).then(cache => {
-                    return fetch(evt.request)
-                        .then(response  => {
-                            if (response.status === 200) {
-                                cache.put(evt.request.url, response.clone());
-                            }
-                            return response;
-                        })
-                        .catch(err => {
-                            return cache.match(evt.request);
-                        });
-                })
-            );
+request.onerror = function(event) {
+  console.log("Woops! " + event.target.errorCode);
+};
 
-            return;
+function saveRecord(record) {
+  const transaction = db.transaction(["pending"], "readwrite");
+  const store = transaction.objectStore("pending");
+
+  store.add(record);
+}
+
+function checkDatabase() {
+  const transaction = db.transaction(["pending"], "readwrite");
+  const store = transaction.objectStore("pending");
+  const getAll = store.getAll();
+
+  getAll.onsuccess = function() {
+    if (getAll.result.length > 0) {
+      fetch("/api/transaction/bulk", {
+        method: "POST",
+        body: JSON.stringify(getAll.result),
+        headers: {
+          Accept: "application/json, text/plain, */*",
+          "Content-Type": "application/json"
         }
+      })
+      .then(response => {        
+        return response.json();
+      })
+      .then(() => {
+        // delete records if successful
+        const transaction = db.transaction(["pending"], "readwrite");
+        const store = transaction.objectStore("pending");
+        store.clear();
+      });
+    }
+  };
+}
 
-        evt.respondWith(
-            caches.open(CACHE_NAME).then( cache => {
-                return cache.match(evt.request).then(response => {
-                    return response || fetch(evt.request)
-                });
-
-            })
-        );
-    });
+// listen for app coming back online
+window.addEventListener("online", checkDatabase);s
